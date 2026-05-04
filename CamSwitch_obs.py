@@ -27,10 +27,10 @@ CAPTURE_HEIGHT = 480
 
 # Parametri logica
 ANALYSIS_WIDTH = 640
-LOOP_SLEEP = 0.5              # ~6-7 cicli al secondo
+LOOP_SLEEP = 0.15              # ~6-7 cicli al secondo
 SWITCH_THRESHOLD = 0.01        # vantaggio minimo richiesto
 SWITCH_PERSISTENCE = 0.2       # secondi per confermare lo switch
-SWITCH_COOLDOWN = 1.0          # secondi minimi tra switch
+SWITCH_COOLDOWN = 5.0          # secondi minimi tra switch
 NO_FACE_HOLD_SECONDS = 2.0     # se nessuna camera vede il volto, tieni l'ultima
 SMOOTHING_ALPHA = 0.35         # media esponenziale score
 
