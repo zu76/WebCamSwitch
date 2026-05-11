@@ -1,5 +1,7 @@
 import time
 import math
+import os
+import sys
 import cv2
 import mediapipe as mp
 import base64
@@ -17,9 +19,12 @@ OBS_SOURCE_B = "Video Capture Device 2"  # Trust 1080P #2 -> scena CAM_B
 SCENE_A = "CAM_A"
 SCENE_B = "CAM_B"
 
-OBS_HOST = "localhost"
-OBS_PORT = 4455
-OBS_PASSWORD = "fbUKojx3JWxxxUW9"
+# OBS WebSocket connection. The password is read from the OBS_WS_PASSWORD
+# environment variable so it is never committed to the repository.
+# Optional overrides: OBS_WS_HOST, OBS_WS_PORT.
+OBS_HOST = os.environ.get("OBS_WS_HOST", "localhost")
+OBS_PORT = int(os.environ.get("OBS_WS_PORT", "4455"))
+OBS_PASSWORD = os.environ.get("OBS_WS_PASSWORD", "")
 
 # Risoluzione cattura screenshot OBS (ridotta per performance)
 CAPTURE_WIDTH = 640
@@ -54,7 +59,6 @@ EYE_GAZE_WEIGHT = 0.4
 
 from mediapipe import tasks
 
-import os
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
 if not os.path.exists(MODEL_PATH):
     import urllib.request
@@ -277,6 +281,18 @@ def get_obs_scene(client):
 # =========================
 
 def main():
+    if not OBS_PASSWORD:
+        print(
+            "ERROR: OBS_WS_PASSWORD environment variable is not set.\n"
+            "       Set it to your OBS WebSocket password before running, e.g.:\n"
+            "         PowerShell:  $env:OBS_WS_PASSWORD = 'your-password'\n"
+            "         cmd.exe:     set OBS_WS_PASSWORD=your-password\n"
+            "         bash:        export OBS_WS_PASSWORD='your-password'\n"
+            "       See .env.example and README.md for details.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     print("Connessione a OBS...")
     ws = obsws(OBS_HOST, OBS_PORT, OBS_PASSWORD)
     ws.connect()

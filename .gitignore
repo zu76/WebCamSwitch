@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 # Auto-downloaded MediaPipe model
 face_landmarker.task
+# Local secrets / environment overrides
+.env
+.venv/
