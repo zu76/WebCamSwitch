@@ -137,7 +137,31 @@ On the first run, the script downloads `face_landmarker.task` (~3 MB) into the r
 
 ## Script configuration
 
-All knobs live at the top of [`CamSwitch_obs.py`](CamSwitch_obs.py):
+Sensitive values are read from environment variables; everything else lives at the top of [`CamSwitch_obs.py`](CamSwitch_obs.py).
+
+### Environment variables
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `OBS_WS_PASSWORD` | **yes** | _(none)_ | OBS WebSocket password. The script exits with an error if this is unset. |
+| `OBS_WS_HOST` | no | `localhost` | OBS WebSocket host. |
+| `OBS_WS_PORT` | no | `4455` | OBS WebSocket port. |
+
+Set them in your shell before running, or copy [`.env.example`](.env.example) to `.env` and load it with a tool of your choice (`direnv`, `python-dotenv`, etc.). `.env` is gitignored.
+
+```powershell
+# PowerShell (current session)
+$env:OBS_WS_PASSWORD = "your-obs-password"
+python CamSwitch_obs.py
+```
+
+```bash
+# bash / zsh
+export OBS_WS_PASSWORD="your-obs-password"
+python CamSwitch_obs.py
+```
+
+### In-source configuration
 
 ```python
 # OBS sources (exact names from the Sources panel)
@@ -147,11 +171,6 @@ OBS_SOURCE_B = "Video Capture Device 2"
 # Scenes to switch between
 SCENE_A = "CAM_A"
 SCENE_B = "CAM_B"
-
-# OBS WebSocket connection
-OBS_HOST = "localhost"
-OBS_PORT = 4455
-OBS_PASSWORD = "change_me"   # use the password set in OBS
 
 # Capture / analysis
 CAPTURE_WIDTH  = 640
@@ -165,8 +184,8 @@ SWITCH_COOLDOWN    = 5.0    # min seconds between switches
 SMOOTHING_ALPHA    = 0.45   # EMA on scores
 
 # Decision thresholds
-SWITCH_THRESHOLD   = 0.05   # total‑score margin
-FRONTALITY_MARGIN  = 0.05   # frontality margin (anti‑jitter gate)
+SWITCH_THRESHOLD   = 0.05   # total-score margin
+FRONTALITY_MARGIN  = 0.05   # frontality margin (anti-jitter gate)
 
 # Score weights (sum = 1.0)
 W_FRONTALITY = 0.55
@@ -175,20 +194,9 @@ W_CENTERING  = 0.15
 W_CONFIDENCE = 0.05
 
 # Frontality model
-FRONTALITY_SIGMA_RAD = math.radians(25.0)  # head‑pose tolerance
+FRONTALITY_SIGMA_RAD = math.radians(25.0)  # head-pose tolerance
 EYE_GAZE_WEIGHT      = 0.4                 # head vs. eyes blend
 ```
-
-### Security note on `OBS_PASSWORD`
-
-The password is read from a Python literal. **Do not commit your real password to a public repository.** Recommended alternatives:
-
-- Set the password from an environment variable, e.g.:
-  ```python
-  import os
-  OBS_PASSWORD = os.environ.get("OBS_WS_PASSWORD", "")
-  ```
-- Or move the configuration into a local `.env` / `config.ini` that is gitignored.
 
 ---
 
@@ -295,7 +303,7 @@ and place it next to `CamSwitch_obs.py`.
 
 ## License
 
-No license file is currently included. Until one is added, all rights are reserved by the repository owner. If you intend to publish or reuse this code, add a license of your choice (MIT, Apache‑2.0, …) at the repository root.
+Released under the [MIT License](LICENSE).
 
 ---
 
