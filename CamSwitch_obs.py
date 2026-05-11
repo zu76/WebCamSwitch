@@ -27,13 +27,13 @@ CAPTURE_HEIGHT = 480
 
 # Parametri logica
 ANALYSIS_WIDTH = 640
-LOOP_SLEEP = 0.15              # ~6-7 cicli al secondo
+LOOP_SLEEP = 0.35              # ~3 cicli al secondo (compromesso CPU / reattivita')
 SWITCH_THRESHOLD = 0.05        # vantaggio minimo richiesto sul punteggio totale
 FRONTALITY_MARGIN = 0.05       # vantaggio minimo richiesto sulla frontality (anti-jitter)
-SWITCH_PERSISTENCE = 0.2       # secondi per confermare lo switch
+SWITCH_PERSISTENCE = 0.6       # secondi per confermare lo switch (~2 cicli a 3 Hz)
 SWITCH_COOLDOWN = 5.0          # secondi minimi tra switch
 NO_FACE_HOLD_SECONDS = 2.0     # se nessuna camera vede il volto, tieni l'ultima
-SMOOTHING_ALPHA = 0.35         # media esponenziale score
+SMOOTHING_ALPHA = 0.45         # media esponenziale score
 
 # Pesi score (somma = 1.0). La frontality (testa + sguardo verso la camera) domina.
 W_FRONTALITY = 0.55
