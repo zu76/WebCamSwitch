@@ -27,17 +27,26 @@ CAPTURE_HEIGHT = 480
 
 # Parametri logica
 ANALYSIS_WIDTH = 640
-LOOP_SLEEP = 0.15              # ~6-7 cicli al secondo
-SWITCH_THRESHOLD = 0.01        # vantaggio minimo richiesto
-SWITCH_PERSISTENCE = 0.2       # secondi per confermare lo switch
+LOOP_SLEEP = 0.35              # ~3 cicli al secondo (compromesso CPU / reattivita')
+SWITCH_THRESHOLD = 0.05        # vantaggio minimo richiesto sul punteggio totale
+FRONTALITY_MARGIN = 0.05       # vantaggio minimo richiesto sulla frontality (anti-jitter)
+SWITCH_PERSISTENCE = 0.6       # secondi per confermare lo switch (~2 cicli a 3 Hz)
 SWITCH_COOLDOWN = 5.0          # secondi minimi tra switch
 NO_FACE_HOLD_SECONDS = 2.0     # se nessuna camera vede il volto, tieni l'ultima
-SMOOTHING_ALPHA = 0.35         # media esponenziale score
+SMOOTHING_ALPHA = 0.45         # media esponenziale score
 
-# Pesi score
-W_FACE_AREA = 0.60
-W_CENTERING = 0.30
-W_CONFIDENCE = 0.10
+# Pesi score (somma = 1.0). La frontality (testa + sguardo verso la camera) domina.
+W_FRONTALITY = 0.55
+W_FACE_AREA  = 0.25
+W_CENTERING  = 0.15
+W_CONFIDENCE = 0.05
+
+# Frontality - decadimento gaussiano sull'angolo combinato yaw/pitch (radianti).
+# sigma ~= 25 gradi: a 0 deg score=1.0, a 25 deg ~0.61, a 45 deg ~0.20.
+FRONTALITY_SIGMA_RAD = math.radians(25.0)
+# Peso relativo dello sguardo oculare (blendshapes) rispetto alla posa della testa.
+# 0 = ignora gli occhi, 1 = solo occhi. 0.4 = la testa pesa di piu' ma gli occhi rifiniscono.
+EYE_GAZE_WEIGHT = 0.4
 
 # =========================
 # MEDIAPIPE
@@ -46,11 +55,11 @@ W_CONFIDENCE = 0.10
 from mediapipe import tasks
 
 import os
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "detector.tflite")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
 if not os.path.exists(MODEL_PATH):
     import urllib.request
-    MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-    print(f"Downloading face detection model to {MODEL_PATH}...")
+    MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+    print(f"Downloading face landmarker model to {MODEL_PATH}...")
     urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
     print("Model downloaded.")
 
@@ -107,8 +116,61 @@ def _empty_result():
     return {
         "face_found": False,
         "score": 0.0,
-        "debug": {"face_area_norm": 0.0, "center_score": 0.0, "confidence": 0.0}
+        "debug": {
+            "face_area_norm": 0.0,
+            "center_score": 0.0,
+            "confidence": 0.0,
+            "frontality": 0.0,
+            "yaw_deg": 0.0,
+            "pitch_deg": 0.0,
+            "eye_offset": 0.0,
+        }
     }
+
+def extract_yaw_pitch(matrix):
+    """Estrae yaw (rotazione Y) e pitch (rotazione X) dalla matrice 4x4 di
+    trasformazione facciale di MediaPipe. Restituisce angoli in radianti.
+    Frontale -> yaw=0, pitch=0."""
+    # MediaPipe restituisce una matrice 4x4 column-major-friendly (numpy array).
+    R = np.asarray(matrix, dtype=np.float64)[:3, :3]
+    # Tait-Bryan Y-X-Z: pitch = asin(-R[1,2]), yaw = atan2(R[0,2], R[2,2])
+    sin_pitch = -R[1, 2]
+    sin_pitch = max(-1.0, min(1.0, sin_pitch))
+    pitch = math.asin(sin_pitch)
+    yaw = math.atan2(R[0, 2], R[2, 2])
+    return yaw, pitch
+
+def compute_head_frontality(yaw_rad, pitch_rad, sigma_rad=FRONTALITY_SIGMA_RAD):
+    """1.0 quando la testa e' perfettamente frontale, ~0 in profilo."""
+    angle_sq = yaw_rad * yaw_rad + pitch_rad * pitch_rad
+    return math.exp(-angle_sq / (2.0 * sigma_rad * sigma_rad))
+
+# Nomi blendshapes MediaPipe che indicano sguardo NON diretto verso la camera.
+_EYE_GAZE_BLENDSHAPES = (
+    "eyeLookInLeft", "eyeLookOutLeft",
+    "eyeLookInRight", "eyeLookOutRight",
+    "eyeLookUpLeft", "eyeLookUpRight",
+    "eyeLookDownLeft", "eyeLookDownRight",
+)
+
+def compute_eye_offset(blendshapes):
+    """Restituisce un valore [0..1] dove 0 = occhi puntati alla camera,
+    1 = occhi completamente deviati. Usa il MAX dei blendshapes di sguardo:
+    se anche solo una direzione e' fortemente attiva, gli occhi sono altrove."""
+    if not blendshapes:
+        return 0.0
+    by_name = {b.category_name: b.score for b in blendshapes}
+    vals = [by_name.get(n, 0.0) for n in _EYE_GAZE_BLENDSHAPES]
+    if not vals:
+        return 0.0
+    return clamp(max(vals), 0.0, 1.0)
+
+def compute_frontality(yaw_rad, pitch_rad, eye_offset):
+    """Combina posa della testa e sguardo oculare in un unico score [0..1]."""
+    head_front = compute_head_frontality(yaw_rad, pitch_rad)
+    eye_front = 1.0 - eye_offset
+    # Media pesata: head_front pesa (1 - EYE_GAZE_WEIGHT), eye_front pesa EYE_GAZE_WEIGHT.
+    return clamp((1.0 - EYE_GAZE_WEIGHT) * head_front + EYE_GAZE_WEIGHT * eye_front)
 
 def analyze_frame(frame, detector):
     try:
@@ -127,25 +189,59 @@ def analyze_frame(frame, detector):
         print(f"Errore in analyze_frame: {e}")
         return _empty_result()
 
-    if not results.detections:
+    landmarks_list = getattr(results, "face_landmarks", None) or []
+    if not landmarks_list:
         return _empty_result()
+
+    matrixes = getattr(results, "facial_transformation_matrixes", None) or []
+    blendshapes_list = getattr(results, "face_blendshapes", None) or []
 
     best_score = -1.0
     best_debug = None
 
-    for det in results.detections:
-        score_conf = det.categories[0].score if det.categories else 0.0
-        bbox = det.bounding_box
-        bw, bh = bbox.width, bbox.height
-        if bw <= 0 or bh <= 0:
+    for i, lms in enumerate(landmarks_list):
+        if not lms:
             continue
-        face_area_norm = clamp((bw * bh) / float(w * h))
-        center_x = bbox.origin_x + bw / 2.0
-        center_y = bbox.origin_y + bh / 2.0
+        # Bounding box dai landmark normalizzati [0..1].
+        xs = [lm.x for lm in lms]
+        ys = [lm.y for lm in lms]
+        x_min, x_max = max(0.0, min(xs)), min(1.0, max(xs))
+        y_min, y_max = max(0.0, min(ys)), min(1.0, max(ys))
+        bw_n = x_max - x_min
+        bh_n = y_max - y_min
+        if bw_n <= 0 or bh_n <= 0:
+            continue
+        face_area_norm = clamp(bw_n * bh_n)
+        center_x = (x_min + x_max) * 0.5 * w
+        center_y = (y_min + y_max) * 0.5 * h
         center_score = compute_center_score(center_x, center_y, w, h)
+
+        # Confidenza: FaceLandmarker non espone uno score diretto, usiamo l'area
+        # come proxy (clampata) per mantenere la stessa struttura logica.
+        score_conf = clamp(face_area_norm * 4.0)
+
+        # Posa della testa.
+        yaw = pitch = 0.0
+        if i < len(matrixes) and matrixes[i] is not None:
+            try:
+                yaw, pitch = extract_yaw_pitch(matrixes[i])
+            except Exception:
+                yaw = pitch = 0.0
+
+        # Sguardo oculare dai blendshapes.
+        eye_offset = 0.0
+        if i < len(blendshapes_list) and blendshapes_list[i]:
+            try:
+                eye_offset = compute_eye_offset(blendshapes_list[i])
+            except Exception:
+                eye_offset = 0.0
+
+        frontality = compute_frontality(yaw, pitch, eye_offset)
+
         total_score = (
-            W_FACE_AREA * face_area_norm +
-            W_CENTERING * center_score +
+            W_FRONTALITY * frontality +
+            W_FACE_AREA  * face_area_norm +
+            W_CENTERING  * center_score +
             W_CONFIDENCE * score_conf
         )
         if total_score > best_score:
@@ -153,10 +249,14 @@ def analyze_frame(frame, detector):
             best_debug = {
                 "face_area_norm": face_area_norm,
                 "center_score": center_score,
-                "confidence": score_conf
+                "confidence": score_conf,
+                "frontality": frontality,
+                "yaw_deg": math.degrees(yaw),
+                "pitch_deg": math.degrees(pitch),
+                "eye_offset": eye_offset,
             }
 
-    if best_score < 0:
+    if best_score < 0 or best_debug is None:
         return _empty_result()
     return {"face_found": True, "score": best_score, "debug": best_debug}
 
@@ -205,13 +305,18 @@ def main():
     candidate_scene = None
     candidate_since = None
 
-    # Face detector
+    # Face landmarker (posa testa + blendshapes per sguardo oculare)
     base_options = tasks.BaseOptions(model_asset_path=MODEL_PATH)
-    options = tasks.vision.FaceDetectorOptions(
+    options = tasks.vision.FaceLandmarkerOptions(
         base_options=base_options,
-        min_detection_confidence=0.5
+        num_faces=1,
+        min_face_detection_confidence=0.5,
+        min_face_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+        output_face_blendshapes=True,
+        output_facial_transformation_matrixes=True,
     )
-    detector = tasks.vision.FaceDetector.create_from_options(options)
+    detector = tasks.vision.FaceLandmarker.create_from_options(options)
 
     print("Loop avviato. Premi CTRL+C per uscire.\n")
 
@@ -252,7 +357,10 @@ def main():
             else:
                 no_face_since = None
 
-            # Decisione
+            # Decisione: doppio gate (score totale + frontality) per evitare switch
+            # quando entrambe le camere vedono il volto ma una sola e' guardata.
+            front_a = res_a["debug"]["frontality"]
+            front_b = res_b["debug"]["frontality"]
             desired_scene = current_scene
 
             if face_a and not face_b:
@@ -261,10 +369,12 @@ def main():
                 desired_scene = SCENE_B
             else:
                 if current_scene == SCENE_A:
-                    if smoothed_b > smoothed_a + SWITCH_THRESHOLD:
+                    if (smoothed_b > smoothed_a + SWITCH_THRESHOLD) and \
+                       (front_b > front_a + FRONTALITY_MARGIN):
                         desired_scene = SCENE_B
                 elif current_scene == SCENE_B:
-                    if smoothed_a > smoothed_b + SWITCH_THRESHOLD:
+                    if (smoothed_a > smoothed_b + SWITCH_THRESHOLD) and \
+                       (front_a > front_b + FRONTALITY_MARGIN):
                         desired_scene = SCENE_A
                 else:
                     desired_scene = SCENE_A if smoothed_a >= smoothed_b else SCENE_B
@@ -291,8 +401,12 @@ def main():
             db = res_b["debug"]
             print(
                 f"[{current_scene}] "
-                f"A(face={face_a}, score={smoothed_a:.3f}, area={da['face_area_norm']:.3f}, center={da['center_score']:.3f}, conf={da['confidence']:.3f}) | "
-                f"B(face={face_b}, score={smoothed_b:.3f}, area={db['face_area_norm']:.3f}, center={db['center_score']:.3f}, conf={db['confidence']:.3f})"
+                f"A(face={face_a}, score={smoothed_a:.3f}, front={da['frontality']:.3f}, "
+                f"yaw={da['yaw_deg']:+.0f}, pitch={da['pitch_deg']:+.0f}, eye={da['eye_offset']:.2f}, "
+                f"area={da['face_area_norm']:.3f}, center={da['center_score']:.3f}) | "
+                f"B(face={face_b}, score={smoothed_b:.3f}, front={db['frontality']:.3f}, "
+                f"yaw={db['yaw_deg']:+.0f}, pitch={db['pitch_deg']:+.0f}, eye={db['eye_offset']:.2f}, "
+                f"area={db['face_area_norm']:.3f}, center={db['center_score']:.3f})"
             )
 
             time.sleep(LOOP_SLEEP)
