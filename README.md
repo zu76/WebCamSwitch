@@ -1,21 +1,55 @@
 # WebCamSwitch
 
-Automatic OBS Studio scene switching driven by **head pose and eye gaze**: the camera that the speaker is actually facing and looking at becomes the active scene.
-
-Built for a two-camera podcast / interview / streaming setup where both cameras frame the same person from different angles. Instead of a manual scene switch, the script watches both feeds in real time and switches OBS to whichever camera the subject is most directly facing.
+Automatic OBS Studio scene switching driven by **head pose and eye gaze**: the camera the speaker is actually facing becomes the active scene, so the audience always sees a centered, on‑axis face.
 
 ---
 
-## Why this exists
+## Business context
 
-A naive “biggest face wins” approach fails when both cameras see the subject roughly equally well — the score becomes a coin flip and the stream ping‑pongs between scenes.
+### The problem
 
-WebCamSwitch solves this by scoring each camera primarily on **frontality**:
+Modern desk setups increasingly use **multiple large monitors side by side**. During video conferences, webinars, or live streams the speaker naturally moves attention between monitors — for example reading chat on one screen while the slide deck is on the other.
 
-- How directly the head is turned toward *that* camera (yaw + pitch).
-- Where the eyes are actually looking (eye‑gaze blendshapes).
+With the traditional **single, fixed webcam** mounted above one of the monitors, this everyday behaviour produces a poor on‑camera experience:
 
-The camera the speaker is looking into wins, even when both cameras see the face at a similar size and position.
+- Whenever the speaker looks at any monitor other than the one hosting the camera, the audience sees a **side profile** of the face.
+- Eye contact is broken; engagement and perceived professionalism drop.
+- The speaker is forced to choose between **looking at the meeting** (good camera angle, bad workflow) and **looking at their work** (good workflow, bad camera angle).
+
+For people who spend several hours a day on calls — sales, customer success, consulting, training, streaming, content creation — this is a sustained quality and ergonomics issue, not a cosmetic detail.
+
+### The solution
+
+WebCamSwitch turns a dual‑monitor desk into a small **automated multi‑camera studio**:
+
+1. One webcam is mounted on top of **each** monitor, framing the speaker from that monitor’s angle.
+2. Both cameras feed into **OBS Studio** as separate scenes (one scene per camera).
+3. WebCamSwitch continuously evaluates which camera the speaker is **currently facing and looking at**, and tells OBS to switch the live scene to that camera.
+
+The result, from the audience’s point of view, is a **single virtual camera that always sees the speaker head‑on** — regardless of which monitor the speaker is actually working on. Eye contact is preserved, the face is centered, and the speaker can use the full desk naturally.
+
+### Why it works where simpler approaches fail
+
+A naïve "biggest / most centered face wins" score is unreliable in this setup: both cameras typically see the speaker at very similar size and framing, so the score becomes a coin flip and the stream ping‑pongs between scenes.
+
+WebCamSwitch scores each camera primarily on **frontality**:
+
+- **Head pose** — how directly the head is turned toward *that* camera (yaw + pitch).
+- **Eye gaze** — where the eyes are actually pointing, independent of head pose.
+
+The camera the speaker is genuinely looking into wins, with hysteresis and cooldown logic to avoid flicker during brief glances.
+
+### Intended users
+
+- Knowledge workers with a multi‑monitor desk who spend significant time on video calls.
+- Streamers, podcasters, and educators using OBS who want hands‑free multi‑angle switching.
+- Anyone using OBS Virtual Camera as input to Zoom / Teams / Google Meet / Discord and wanting a more natural on‑camera presence.
+
+### Out of scope
+
+- Multi‑person framing or speaker tracking across a room.
+- Hardware capture cards, DSLRs, or non‑USB camera workflows (any source visible to OBS is supported, but the project is built and tested with standard USB webcams).
+- Cloud / SaaS deployment. WebCamSwitch is a local Python script and is designed to run on the speaker’s own machine alongside OBS.
 
 ---
 
@@ -24,6 +58,7 @@ The camera the speaker is looking into wins, even when both cameras see the face
 ```
    ┌──────────────┐     ┌──────────────┐
    │  Webcam A    │     │  Webcam B    │
+   │  on Monitor 1│     │  on Monitor 2│
    └──────┬───────┘     └──────┬───────┘
           │ used by             │ used by
           ▼                     ▼
